@@ -6,7 +6,9 @@ from keras.callbacks import Callback, EarlyStopping
 from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
 from keras.callbacks import LambdaCallback, TensorBoard
 from keras import models
-
+# 使用插值法重新采样
+from scipy.interpolate import interp1d
+import pickle as pkl
 import matplotlib.pyplot as plt
 import math
 
@@ -292,3 +294,46 @@ class VAE(keras.Model):
             "alpha": alpha,
         }
 # (x_train, target_train), (x_test, target_test) = keras.datasets.mnist.load_data()
+with open('procd_data.pkl','rb') as f:
+    data = pkl.load(f)
+
+
+"""
+将数据集分为训练集和测试集，
+并将AIS字段和其船只类型标签拆开
+"""
+train_end=int(len(data)*0.7)
+# print(train_end)
+print(type(data))
+_train=data[:train_end].copy()
+_test=data[train_end:].copy()
+x_train=[]
+x_test=[]
+target_train=[]
+target_test=[]
+"""
+# [0 mmsi,1 TS,2 lat,3 lon,4 sog,5 cog,
+# 6 length,7 width,8 draft,9vesselType]
+"""
+
+x_train=_train[:,:,[0,1,2,3,4,5,6,7,8]]
+target_train=_train[:,1,9]
+
+x_test=_test[:,:,[0,1,2,3,4,5,6,7,8]]
+target_test=_test[:,1,9]
+"""
+input shape 
+train set
+data  x:(286, 180, 9)
+lable y:(286,)
+
+test set
+
+
+# (x1_train, t1arget_train), (x1_test, t1arget_test) = keras.datasets.mnist.load_data()
+
+# print(x_train.shape)
+# print(target_train.shape)
+"""
+
+
