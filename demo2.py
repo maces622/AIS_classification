@@ -7,7 +7,8 @@ import numpy as np
 import tensorflow as tf
 import keras
 from keras import layers
-
+from tensorflow import train
+from keras.callbacks import ModelCheckpoint
 import pickle as pkl
 import matplotlib.pyplot as plt
 import math
@@ -25,7 +26,7 @@ class Sampling(layers.Layer):
 global settings
 """
 # 隐藏空间维度
-latent_dim = 3
+latent_dim = 10
 # shape : 输入形状 长 宽 通道数目
 # AIS数据重新采样后长度为 180（暂定），字段数目为 10 ，独热码形式通道为1(gray graph 1,RGB 3)
 height = 160
@@ -182,10 +183,10 @@ def compute_loss_labeled(encoder, decoder, x, y):
     # Sum the two loss terms
     loss = reconstruction_loss + kl_loss
     return loss,kl_loss
-batch_size=40
+batch_size=72
 def compute_loss_unlabeled(encoder, decoder, classifier, x):
     # Sum over all possible labels
-    u_loss = 0
+    u_loss = 0.0
     all_possible_labels=[0,1,2,3]
 
     predict_res=classifier(x)
@@ -200,17 +201,17 @@ def compute_loss_unlabeled(encoder, decoder, classifier, x):
 
         loss,kl_loss = compute_loss_labeled(encoder, decoder, x, y_tensor)
         q_y_given_x=predict_res[:,y]
-        u_loss += q_y_given_x * (-loss)  # q_y_given_x should be the predicted probability of label y
+        u_loss += q_y_given_x * (loss)  # q_y_given_x should be the predicted probability of label y
           
     # Add the entropy of the predicted label distribution
-    entropy_loss = -tf.reduce_sum(predict_res * tf.math.log(predict_res + tf.keras.backend.epsilon()), axis=-1)
+    entropy_loss = tf.reduce_sum(predict_res * tf.math.log(predict_res + tf.keras.backend.epsilon()), axis=-1)
+    # tf.print(entropy_loss)
     # Sum the negative lower bound and entropy loss
     total_u_loss = u_loss + entropy_loss
     return total_u_loss
 def compute_classifier_loss(classifier, x_labeled, y_true):
     # Classifier predictions
     y_pred = classifier(x_labeled)
-    
     # Compute the cross-entropy loss
     y_true_squeezed = tf.squeeze(y_true, axis=-1)
     clf_loss = tf.reduce_mean(
@@ -263,7 +264,7 @@ class VAE(keras.Model):
             Loss_1,kl_loss=compute_loss_labeled(self.encoder,self.decoder,x_supervised,y_supervised)
             Loss_2=compute_loss_unlabeled(self.encoder,self.decoder,self.clf,x_unsupervised)
             Loss_clf=compute_classifier_loss(self.clf,x_labeled=x_supervised,y_true=y_supervised)
-            Loss=Loss_1+Loss_2+alpha*Loss_clf
+            Loss=(Loss_1+Loss_2)*0.25+alpha*Loss_clf*20
 
         grads = Tape.gradient(Loss, self.trainable_weights)
 
@@ -305,12 +306,12 @@ def convert_to_one_hot(data):
             one_hot=np.eye(20)[np.round(channel_data*19).astype(int)]
             result[i,:,(j+2)*20:(j+2+1)*20]=one_hot
 
-        one_hot_4=np.eye(8)[np.round(channel_4_data*7).astype(int)]
-        one_hot_5=np.eye(8)[np.round(channel_5_data*7).astype(int)]
-        one_hot_6=np.eye(8)[np.round(channel_6_data*7).astype(int)]
-        result[i, :, 4 * 8:(4 + 1) * 8] = one_hot_4
-        result[i, :, 5 * 8:(5 + 1) * 8] = one_hot_5
-        result[i, :, 6 * 8:(6 + 1) * 8] = one_hot_6
+        one_hot_4=np.eye(11)[np.round(channel_4_data*10).astype(int)]
+        one_hot_5=np.eye(11)[np.round(channel_5_data*10).astype(int)]
+        one_hot_6=np.eye(2)[np.round(channel_6_data*1).astype(int)]
+        result[i, :, 4 * 11:(4 + 1) * 11] = one_hot_4
+        result[i, :, 5 * 11:(5 + 1) * 11] = one_hot_5
+        result[i, :, 6 * 2:(6 + 1) * 2] = one_hot_6
 
 
     return result
@@ -398,8 +399,8 @@ data[:,:,6]=(data[:,:,6]-min_len)/(max_len-min_len)
 data[:,:,7]=(data[:,:,7]-min_wid)/(max_wid-min_wid)
 data[:,:,8]=(data[:,:,8]-min_drt)/(max_drt-min_drt)
 
-_train=data[:200].copy()
-_test=data[200:400].copy()
+_train=data[:720].copy()
+_test=data[360:720].copy()
 
 
 x_train=_train[:,:,[2,3,4,5,6,7,8]].astype(float)
@@ -442,21 +443,34 @@ print(x_train.shape)
 
 vae = VAE(encoder, decoder,classifier)
 vae.compile(optimizer=keras.optimizers.Adam())
-
-vae.fit([x_train,target_train_1],x_test, epochs=10, batch_size=40)
-def plot_label_clusters(encoder, decoder, x_train, target_train):
+vae.fit([x_train,target_train_1],x_train, epochs=1000, batch_size=72)
+tf.saved_model.save(vae, './demo2_model')
+def plot_label_clusters(encoder, decoder, data, y):
     # Display a 2D plot of the digit classes in the latent space
-    z_mean, _, _ = encoder.predict([x_test,target_test_1])
+    cnt = 0
+    z_mean, _, _ = encoder.predict([data,y])
+    clf=classifier.predict(data)
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')  # 创建一个三维的绘图工具
-    ax.scatter(z_mean[:200, 0], z_mean[:200, 1], z_mean[:200, 2], c=arr_new1[:200])
+    ax.scatter(z_mean[:360, 0], z_mean[:360, 1], z_mean[:360, 2], c=arr_new1[:360])
     # plt.colorbar()
     ax.set_xlabel("z[0]")
     ax.set_ylabel("z[1]")
     ax.set_zlabel("z[2]")
     plt.show()
 
+    for x in range(clf.shape[0]):
+        print(clf[x],arr_new1[x])
+        mx=0
+        clp=-1
+        for g in range(4):
+            if clf[x][g]>mx:
+                mx=clf[x][g]
+                clp=g
+        if clp==arr_new1[x]:
+            cnt=cnt+1
 
 
-plot_label_clusters(encoder, decoder, x_train, target_train_1)
+
+plot_label_clusters(encoder, decoder, x_test, target_test_1)
 
