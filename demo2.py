@@ -26,13 +26,13 @@ class Sampling(layers.Layer):
 global settings
 """
 # 隐藏空间维度
-latent_dim = 10
+latent_dim = 4
 # shape : 输入形状 长 宽 通道数目
 # AIS数据重新采样后长度为 180（暂定），字段数目为 10 ，独热码形式通道为1(gray graph 1,RGB 3)
 height = 160
 width  = 80
 chan = 1
-beta=0.4
+beta=100
 input_shape = (height, width,1)  # 对于灰度图像，通道数是1
 # number of vessel types
 num_classes = 4
@@ -143,11 +143,11 @@ x = layers.Dense(250, activation='relu')(x)
 x = layers.Reshape((10, 5, 5))(x) # 这里的目标维度取决于您想要如何开始上采样过程
 
 # 五个反卷积层（上采样层），使用给定的输出通道数和内核大小
-x = layers.Conv2DTranspose(5, kernel_size=(3, 3), activation='relu', strides=1,padding='same')(x)
+x = layers.Conv2DTranspose(5, kernel_size=(3, 3), activation='relu', strides=2,padding='same')(x)
 x = layers.Conv2DTranspose(5, kernel_size=(5, 5), activation='relu',  strides=2,padding='same')(x)
 x = layers.Conv2DTranspose(5, kernel_size=(10, 10), activation='relu',  strides=2,padding='same')(x)
 x = layers.Conv2DTranspose(5, kernel_size=(10, 10), activation='relu',  strides=2,padding='same')(x)
-x_output = layers.Conv2DTranspose(1, kernel_size=(10, 10), activation='sigmoid',  strides=2,padding='same')(x)
+x_output = layers.Conv2DTranspose(1, kernel_size=(10, 10), activation='sigmoid',  strides=1,padding='same')(x)
 
 # 最后一个反卷积层生成原始轨迹，使用sigmoid激活函数
 # 创建解码器模型
@@ -164,26 +164,28 @@ decoder.summary()
 """
 compucate the value of loss functions========
 """
+@keras.utils.register_keras_serializable()
 def compute_loss_labeled(encoder, decoder, x, y):
     # Encode the input to get the mean, log-variance, and sampled z
     z_mean, z_log_var, z = encoder([x, y])
     # Decode the sampled z to reconstruct the image
     reconstruction = decoder([z, y])
-    
+
     # Compute the binary cross-entropy for reconstruction loss
     reconstruction_loss = tf.reduce_mean(
-        tf.reduce_sum(keras.losses.binary_crossentropy(x,reconstruction),axis=(1,2))
+        tf.reduce_sum(keras.losses.binary_crossentropy(x,reconstruction),
+                      axis=(1,2))
     )
-    
+
     # Compute the KL divergence loss
-    kl_loss = -0.5 * tf.reduce_mean(
-        1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=1
-    )
-    
+    kl_loss = -0.5 * (
+        1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
+    kl_loss = tf.reduce_mean(tf.reduce_sum(kl_loss,axis=1))
     # Sum the two loss terms
     loss = reconstruction_loss + kl_loss
     return loss,kl_loss
-batch_size=72
+batch_size=100
+@keras.utils.register_keras_serializable()
 def compute_loss_unlabeled(encoder, decoder, classifier, x):
     # Sum over all possible labels
     u_loss = 0.0
@@ -202,13 +204,14 @@ def compute_loss_unlabeled(encoder, decoder, classifier, x):
         loss,kl_loss = compute_loss_labeled(encoder, decoder, x, y_tensor)
         q_y_given_x=predict_res[:,y]
         u_loss += q_y_given_x * (loss)  # q_y_given_x should be the predicted probability of label y
-          
+
     # Add the entropy of the predicted label distribution
     entropy_loss = tf.reduce_sum(predict_res * tf.math.log(predict_res + tf.keras.backend.epsilon()), axis=-1)
     # tf.print(entropy_loss)
     # Sum the negative lower bound and entropy loss
     total_u_loss = u_loss + entropy_loss
     return total_u_loss
+@keras.utils.register_keras_serializable()
 def compute_classifier_loss(classifier, x_labeled, y_true):
     # Classifier predictions
     y_pred = classifier(x_labeled)
@@ -216,9 +219,7 @@ def compute_classifier_loss(classifier, x_labeled, y_true):
     y_true_squeezed = tf.squeeze(y_true, axis=-1)
     clf_loss = tf.reduce_mean(
         keras.losses.categorical_crossentropy(y_true_squeezed, y_pred)
-
     )
-    
     return clf_loss
 
 
@@ -227,6 +228,7 @@ def compute_classifier_loss(classifier, x_labeled, y_true):
 """
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 """
+@keras.utils.register_keras_serializable()
 class VAE(keras.Model):
 
     def __init__(self, encoder,decoder,clf,**kwargs):
@@ -256,7 +258,7 @@ class VAE(keras.Model):
         [x_supervised, y_supervised],x_unsupervised = data
         # print(x_supervised.shape,y_supervised.shape,x_unsupervised.shape)
         # x_unsupervised=x_supervised
-        alpha=beta*float(0.5)
+        alpha=beta*float(1)
         # print(x_supervised.shape,y_supervised.shape)
         with tf.GradientTape() as Tape:
             # 均值、方差、z
@@ -264,11 +266,11 @@ class VAE(keras.Model):
             Loss_1,kl_loss=compute_loss_labeled(self.encoder,self.decoder,x_supervised,y_supervised)
             Loss_2=compute_loss_unlabeled(self.encoder,self.decoder,self.clf,x_unsupervised)
             Loss_clf=compute_classifier_loss(self.clf,x_labeled=x_supervised,y_true=y_supervised)
-            Loss=(Loss_1+Loss_2)*0.25+alpha*Loss_clf*20
+            Loss=(Loss_1+Loss_2)+alpha*Loss_clf
 
         grads = Tape.gradient(Loss, self.trainable_weights)
-
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
+
         self.total_loss_tracker.update_state(Loss)
         self.l1_loss_tracker.update_state(Loss_1)
         self.l2_loss_tracker.update_state(Loss_2)
@@ -284,6 +286,7 @@ class VAE(keras.Model):
             "alpha": self.alpha_tracker.result(),
         }
 """AIS stream to 7-hot code"""
+@keras.utils.register_keras_serializable()
 def convert_to_one_hot(data):
     # 获取数据的形状
     n, _, channels = data.shape
@@ -299,12 +302,12 @@ def convert_to_one_hot(data):
         channel_6_data=data[i,:,6]
         for j in range(2):
             channel_data = data[i, :, j]
-            one_hot=np.eye(8)[np.round(channel_data*7).astype(int)]
-            result[i,:,j*8:(j+1)*8]=one_hot
+            one_hot=np.eye(14)[np.round(channel_data*13).astype(int)]
+            result[i,:,j*14:(j+1)*14]=one_hot
         for j in range(2):
             channel_data = data[i, :, j+2]
-            one_hot=np.eye(20)[np.round(channel_data*19).astype(int)]
-            result[i,:,(j+2)*20:(j+2+1)*20]=one_hot
+            one_hot=np.eye(14)[np.round(channel_data*13).astype(int)]
+            result[i,:,(j+2)*14:(j+2+1)*14]=one_hot
 
         one_hot_4=np.eye(11)[np.round(channel_4_data*10).astype(int)]
         one_hot_5=np.eye(11)[np.round(channel_5_data*10).astype(int)]
@@ -388,7 +391,7 @@ for track in data:
         max_wid=max(max_wid,row[7])
         min_wid=min(min_wid,row[7])
         max_drt=max(max_drt,row[8])
-        max_drt=min(max_drt,row[8])
+        min_drt=min(min_drt,row[8])
 
 data[:,:,2]=(data[:,:,2]-min_lat)/(max_lat-min_lat)
 data[:,:,3]=(data[:,:,3]-min_lon)/(max_lon-min_lon)
@@ -398,16 +401,28 @@ data[:,:,5]=(data[:,:,5]-min_cog)/(max_cog-min_cog)
 data[:,:,6]=(data[:,:,6]-min_len)/(max_len-min_len)
 data[:,:,7]=(data[:,:,7]-min_wid)/(max_wid-min_wid)
 data[:,:,8]=(data[:,:,8]-min_drt)/(max_drt-min_drt)
+print(max_lat,min_lat)
+print(max_lon,min_lon)
+print(max_sog,min_sog)
+print(max_cog,min_cog)
 
-_train=data[:720].copy()
-_test=data[360:720].copy()
+print(max_len,min_len)
+print(max_wid,min_wid)
+print(max_drt,min_drt)
 
+
+_train=data[:300].copy()
+_test=data[300:600].copy()
+_res=data[600:1100].copy()
 
 x_train=_train[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_train=_train[:,0,9].astype(int)
 
 x_test=_test[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_test=_test[:,0,9].astype(int)
+
+x_res=_res[:,:,[2,3,4,5,6,7,8]].astype(float)
+target_res=_res[:,0,9].astype(int)
 # 7 8 6 3
 # print(target_train.shape)
 # change label to one-hot format
@@ -423,6 +438,15 @@ conditions2 = [
     target_test == 7,
     target_test == 8,
 ]
+
+
+conditions3 = [
+    target_res == 3,
+    target_res == 6,
+    target_res == 7,
+    target_res == 8,
+]
+
 # 定义对应条件下的替换值
 choices = [0, 1, 2, 3]
 
@@ -432,27 +456,35 @@ arr_new = np.select(conditions1, choices, default=target_train)
 target_train_1=np.eye(4)[arr_new]
 arr_new1 = np.select(conditions2, choices, default=target_test)
 target_test_1=np.eye(4)[arr_new1]
+arr_new2 = np.select(conditions3, choices, default=target_res)
+target_res_1=np.eye(4)[arr_new2]
 
 x_train=convert_to_one_hot(x_train)
 x_test=convert_to_one_hot(x_test)
+x_res=convert_to_one_hot(x_res)
+
 x_train = np.expand_dims(x_train, -1)
 x_test  = np.expand_dims(x_test, -1)
+x_res =  np.expand_dims(x_res, -1)
 target_train_1 = np.expand_dims(target_train_1,-1)
+target_res_1=np.expand_dims(target_res_1,-1)
 
-print(x_train.shape)
+# print(x_train.shape)
 
 vae = VAE(encoder, decoder,classifier)
 vae.compile(optimizer=keras.optimizers.Adam())
-vae.fit([x_train,target_train_1],x_train, epochs=1000, batch_size=72)
-tf.saved_model.save(vae, './demo2_model')
-def plot_label_clusters(encoder, decoder, data, y):
+vae.fit([x_train,target_train_1],x_test, epochs=100, batch_size=batch_size)
+
+
+
+def plot_label_clusters(encd, clfi, data, y):
     # Display a 2D plot of the digit classes in the latent space
     cnt = 0
-    z_mean, _, _ = encoder.predict([data,y])
-    clf=classifier.predict(data)
+    z_mean, _, _ = encd.predict([data,y])
+    clf=clfi.predict(data)
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')  # 创建一个三维的绘图工具
-    ax.scatter(z_mean[:360, 0], z_mean[:360, 1], z_mean[:360, 2], c=arr_new1[:360])
+    ax.scatter(z_mean[:500, 0], z_mean[:500, 1], z_mean[:500, 2], c=arr_new2[:500])
     # plt.colorbar()
     ax.set_xlabel("z[0]")
     ax.set_ylabel("z[1]")
@@ -460,17 +492,19 @@ def plot_label_clusters(encoder, decoder, data, y):
     plt.show()
 
     for x in range(clf.shape[0]):
-        print(clf[x],arr_new1[x])
+        print(clf[x],arr_new2[x])
         mx=0
         clp=-1
         for g in range(4):
             if clf[x][g]>mx:
                 mx=clf[x][g]
                 clp=g
-        if clp==arr_new1[x]:
+        if clp==arr_new2[x]:
             cnt=cnt+1
+    print("测试集数量：",clf.shape[0])
+    print("准确数量",cnt)
 
 
 
-plot_label_clusters(encoder, decoder, x_test, target_test_1)
+plot_label_clusters(encoder, classifier, x_res, target_res_1)
 
