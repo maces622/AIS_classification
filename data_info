@@ -1,6 +1,9 @@
-From = 2021-02-01
-To = 2021-02-28
-X Min = -90.5
-Y Min = 28.299999999999997
-X Max = -89.2
-Y Max = 29.300000000000026
+From = 2021,2022 Jan
+To = 2021,2022 Mar
+
+X Min = -121.57
+Y Min = 31.5
+X Max = -116.99999999999999
+Y Max = 34.999999999999986
+
+source:NOAA https://coast.noaa.gov/digitalcoast/tools/ais.html
