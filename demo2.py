@@ -195,7 +195,7 @@ def compute_loss_unlabeled(encoder, decoder, classifier, x):
     # tf.print(predict_res)
     ## 船只种类
     for y in all_possible_labels:  # all_possible_labels should be one-hot encoded labels
-        arrays = np.full((batch_size,), y)
+        arrays = np.full((50,), y)
         label_1 = np.eye(4)[arrays]
         label_1 = np.expand_dims(label_1, -1)
         y_tensor = tf.convert_to_tensor(label_1)
@@ -255,16 +255,19 @@ class VAE(keras.Model):
             self.alpha_tracker,
         ]
     def train_step(self,data):
-        [x_supervised, y_supervised],x_unsupervised = data
+        [x_supervised, x_unsupervised],y_supervised = data
         # print(x_supervised.shape,y_supervised.shape,x_unsupervised.shape)
         # x_unsupervised=x_supervised
-        alpha=beta*float(1)
-        # print(x_supervised.shape,y_supervised.shape)
+        alpha=beta*float(0.5)
+        half_u=x_unsupervised[:50,:,:,:]
+        print(type(x_unsupervised))
+        print(x_unsupervised.shape)
         with tf.GradientTape() as Tape:
             # 均值、方差、z
 
             Loss_1,kl_loss=compute_loss_labeled(self.encoder,self.decoder,x_supervised,y_supervised)
-            Loss_2=compute_loss_unlabeled(self.encoder,self.decoder,self.clf,x_unsupervised)
+            # print(type(x_unsupervised))
+            Loss_2=compute_loss_unlabeled(self.encoder,self.decoder,self.clf,half_u)
             Loss_clf=compute_classifier_loss(self.clf,x_labeled=x_supervised,y_true=y_supervised)
             Loss=(Loss_1+Loss_2)+alpha*Loss_clf
 
@@ -302,24 +305,24 @@ def convert_to_one_hot(data):
         channel_6_data=data[i,:,6]
         for j in range(2):
             channel_data = data[i, :, j]
-            one_hot=np.eye(14)[np.round(channel_data*13).astype(int)]
-            result[i,:,j*14:(j+1)*14]=one_hot
+            one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
+            result[i,:,j*10:(j+1)*10]=one_hot
         for j in range(2):
             channel_data = data[i, :, j+2]
-            one_hot=np.eye(14)[np.round(channel_data*13).astype(int)]
-            result[i,:,(j+2)*14:(j+2+1)*14]=one_hot
+            one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
+            result[i,:,(j+2)*10:(j+2+1)*10]=one_hot
 
-        one_hot_4=np.eye(11)[np.round(channel_4_data*10).astype(int)]
-        one_hot_5=np.eye(11)[np.round(channel_5_data*10).astype(int)]
-        one_hot_6=np.eye(2)[np.round(channel_6_data*1).astype(int)]
-        result[i, :, 4 * 11:(4 + 1) * 11] = one_hot_4
-        result[i, :, 5 * 11:(5 + 1) * 11] = one_hot_5
-        result[i, :, 6 * 2:(6 + 1) * 2] = one_hot_6
+        one_hot_4=np.eye(15)[np.round(channel_4_data*14).astype(int)]
+        one_hot_5=np.eye(15)[np.round(channel_5_data*14).astype(int)]
+        one_hot_6=np.eye(10)[np.round(channel_6_data*9).astype(int)]
+        result[i, :, 40:40+15] = one_hot_4
+        result[i, :, 55:55+15] = one_hot_5
+        result[i, :, 70:70+10] = one_hot_6
 
 
     return result
 
-with open('procd_data.pkl','rb') as f:
+with open('procd_california.pkl','rb') as f:
     data = pkl.load(f)
 
 
@@ -327,9 +330,6 @@ with open('procd_data.pkl','rb') as f:
 将数据集分为训练集和测试集，
 并将AIS字段和其船只类型标签拆开
 """
-
-train_end=int(len(data)*0.8)
-# print(train_end)
 
 """
 # [0 mmsi,1 TS,2 lat,3 lon,4 sog,5 cog,
@@ -411,9 +411,11 @@ print(max_wid,min_wid)
 print(max_drt,min_drt)
 
 
-_train=data[:300].copy()
-_test=data[300:600].copy()
-_res=data[600:1100].copy()
+_train=data[:200].copy()
+_test=data[200:300].copy()
+_test=np.concatenate((_test,_test),axis=0)
+print(type(_test))
+_res=data[300:490].copy()
 
 x_train=_train[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_train=_train[:,0,9].astype(int)
@@ -472,8 +474,8 @@ target_res_1=np.expand_dims(target_res_1,-1)
 # print(x_train.shape)
 
 vae = VAE(encoder, decoder,classifier)
-vae.compile(optimizer=keras.optimizers.Adam())
-vae.fit([x_train,target_train_1],x_test, epochs=100, batch_size=batch_size)
+vae.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0001))
+vae.fit([x_train,x_test],target_train_1, epochs=50, batch_size=batch_size)
 
 
 
@@ -484,7 +486,7 @@ def plot_label_clusters(encd, clfi, data, y):
     clf=clfi.predict(data)
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')  # 创建一个三维的绘图工具
-    ax.scatter(z_mean[:500, 0], z_mean[:500, 1], z_mean[:500, 2], c=arr_new2[:500])
+    ax.scatter(z_mean[:190, 0], z_mean[:190, 1], z_mean[:190, 1], c=arr_new2[:190])
     # plt.colorbar()
     ax.set_xlabel("z[0]")
     ax.set_ylabel("z[1]")
