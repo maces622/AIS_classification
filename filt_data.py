@@ -13,8 +13,8 @@ from scipy.interpolate import interp1d
 vessel_dict={}
 # [0 mmsi,1 TS,2 lat,3 lon,4 sog,5 cog,
 # 6 length,7 width,8 draft,9vesselType]
-source_data='output_p.pkl'
-output_data='procd_data.pkl'
+source_data='california_1.pkl'
+output_data='procd_california.pkl'
 """
 该部分主要用于按照输入CNN的要求清理AIS数据流
 分别按照速度、长度、目标船只类型进行清理
@@ -44,16 +44,30 @@ def len_jud(l_msg):
         return False
 
 def in_lst(now_vesselType):
-    target_lst=[7,3,8,6]
-    high_bit=int(now_vesselType/10)
-    if high_bit in target_lst:
+    target_lst=[30,1001,1002,
+                60,61,62,63,64,65,66,67,68,69,1012,1013,1014,1015,
+                70,71,72,73,74,75,76,77,78,79,1016,
+                80,81,82,83,84,85,86,87,88,89,1017,1024]
+    if now_vesselType in target_lst:
         return False
     else:
         return True
 
-def cl(now_vesselType):
-    mainType=int(now_vesselType/10)
-    return mainType
+
+fishing = [30,1001,1002]
+passgi=[60,61,62,63,64,65,66,67,68,69,1012,1013,1014,1015]
+cargo =[70,71,72,73,74,75,76,77,78,79,1016]
+tanker=[80,81,82,83,84,85,86,87,88,89,1017,1024]
+def get_short_code(vessel_type):
+    if vessel_type in fishing:
+        return 3
+    elif vessel_type in passgi:
+        return 6
+    elif vessel_type in cargo:
+        return 7
+    elif vessel_type in tanker:
+        return 8
+
 
 
 tot=0
@@ -78,9 +92,9 @@ with open(source_data,"rb") as f:
                 elif in_lst(now_msg[0][9]):
                     pass
                 else:
-                    now_msg[0][9]=cl(now_msg[0][9])
+                    now_msg[0][9]=get_short_code(now_msg[0][9])
                     ll_msg_2.append(now_msg)
-                    print(now_msg[1])
+                    # print(now_msg[1])
                     if now_msg[0][9] in vessel_dict:
                         vessel_dict[now_msg[0][9]]+=1
                     else :
@@ -94,20 +108,13 @@ with open(source_data,"rb") as f:
 print("合格的数据：",len(ll_msg_2))
 print("总数据量：",tot)
 # print(type(ll_msg_2))
-# sorted_vdict = sorted(vessel_dict.items(), key=lambda item: (item[0],item[1]))
-# print(sorted_vdict)
+sorted_vdict = sorted(vessel_dict.items(), key=lambda item: (item[0],item[1]))
+print(sorted_vdict)
 
 """
 IMO VESSEL TYPE LIST
 
-    20-29: 油轮
-    30-39: 货船
-    40-49: 高速船（包括快艇、高速客货船等）
-    50-59: 渡轮
-    60-69: 客船（包括游轮和其他大型客船）
-    70-79: 休闲船只（包括帆船、游艇等）
-    80-89: 渔船
-    90-99: 拖船和特 殊船只（例如搜救船、拖轮等）
+fishing 30 1001 1002
 
 ====================================================================================
 
@@ -141,7 +148,7 @@ interp_columns 是指的需要线性插值进行重新采样的列
 # 6 length,7 width,8 draft,9vesselType]
 
 """
-def resample_data(data, target_length=180, fixed_columns=(0, 1, 6, 7, 8,9),
+def resample_data(data, target_length=160, fixed_columns=(0, 1, 6, 7, 8,9),
                   interp_columns=(2,3,4,5)):
     data_array=np.array(data)
     original_len=data_array.shape[0]
@@ -168,18 +175,26 @@ def resample_data(data, target_length=180, fixed_columns=(0, 1, 6, 7, 8,9),
                 nearest_idx = np.argmin(np.abs(original_indices - new_idx))
                 resampled_data[i, col] = data_array[nearest_idx, col]
     return resampled_data
-
+#
 ll_msg_3=[]
 for track in ll_msg_2:
     resample_Track=(
         resample_data(track))
     ll_msg_3.append(resample_Track)
-with open(output_data,'wb') as f:
-    pkl.dump(ll_msg_3,f)
-# print(ll_msg_3[0])
-#
-# print(len(ll_msg_3[0]))
-# save to pkl file
-# with open("data_set1.pkl",'wb') as f:
-#         pickle.dump(ll_msg_2,f)
+np_ll_msg=np.stack(ll_msg_3,axis=0)
+# print(len(np_ll_msg[0]))
+# print(type(np_ll_msg))
+x=0
+for track_num in range(np_ll_msg.shape[0]):
+    if np_ll_msg[track_num,1,6]!=0:
 
+        x=x+1
+    for row in range(np_ll_msg.shape[1]):
+        # print(np_ll_msg[track_num,row,1].timestamp())
+        np_ll_msg[track_num,row,1]=np_ll_msg[track_num,row,1].timestamp()
+        #
+        # print(np_ll_msg[track_num,row,0])
+        # print(np_ll_msg[track_num,row,6:8])
+with open(output_data,'wb') as f:
+    pkl.dump(np_ll_msg,f)
+print("有静态参数的样本量：",x)
