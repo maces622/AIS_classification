@@ -42,6 +42,15 @@ def len_jud(l_msg):
         return True
     else :
         return False
+def split_into_2(dt1,dt2):
+    if dt2-dt1 > timedelta(hours=2) or (not (dt1.year == dt2.year and
+                                        dt1.month == dt2.month and dt1.day == dt2.day)):
+        # AIS数据点时间差大于2h or 不属于同一天
+        # 需要分成两段轨迹
+
+        return True
+    else :
+        return False
 
 def in_lst(now_vesselType):
     target_lst=[30,1001,1002,
@@ -76,6 +85,8 @@ with open(source_data,"rb") as f:
     pklReader=pkl.load(f)
     now_msg=[]
     for row in pklReader:
+        row.append(tot)
+        # print(type(row))
         if started_flg==False:
             now_msg=[]
             now_mmsi=row[0]
@@ -83,17 +94,18 @@ with open(source_data,"rb") as f:
             started_flg=True
             
         else:
-            if row[0]==now_mmsi:
+            if row[0]==now_mmsi or not split_into_2(now_msg[-1][1],row[1]):
                 now_msg.append(row)
             else :
-                tot=tot+1
                 if len_jud(now_msg) or sog_jud(now_msg):
                     pass
                 elif in_lst(now_msg[0][9]):
                     pass
                 else:
                     now_msg[0][9]=get_short_code(now_msg[0][9])
+
                     ll_msg_2.append(now_msg)
+                    tot = tot + 1
                     # print(now_msg[1])
                     if now_msg[0][9] in vessel_dict:
                         vessel_dict[now_msg[0][9]]+=1
@@ -103,6 +115,23 @@ with open(source_data,"rb") as f:
                 now_msg=[]
                 now_mmsi=row[0]
                 now_msg.append(row)
+
+    # 记录最后一条AIS航迹
+    if len_jud(now_msg) or sog_jud(now_msg):
+        pass
+    elif in_lst(now_msg[0][9]):
+        pass
+    else:
+        now_msg[0][9] = get_short_code(now_msg[0][9])
+        ll_msg_2.append(now_msg)
+        tot = tot + 1
+        if now_msg[0][9] in vessel_dict:
+            vessel_dict[now_msg[0][9]] += 1
+        else:
+            vessel_dict[now_msg[0][9]] = 1
+
+print(ll_msg_2[0])
+
                 
 
 print("合格的数据：",len(ll_msg_2))
@@ -178,6 +207,7 @@ def resample_data(data, target_length=160, fixed_columns=(0, 1, 6, 7, 8,9),
 #
 ll_msg_3=[]
 for track in ll_msg_2:
+
     resample_Track=(
         resample_data(track))
     ll_msg_3.append(resample_Track)

@@ -411,11 +411,11 @@ print(max_wid,min_wid)
 print(max_drt,min_drt)
 
 
-_train=data[:200].copy()
-_test=data[200:300].copy()
+_train=data[:600].copy()
+_test=data[600:900].copy()
 _test=np.concatenate((_test,_test),axis=0)
 print(type(_test))
-_res=data[300:490].copy()
+_res=data[900:1100].copy()
 
 x_train=_train[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_train=_train[:,0,9].astype(int)
@@ -474,7 +474,7 @@ target_res_1=np.expand_dims(target_res_1,-1)
 # print(x_train.shape)
 
 vae = VAE(encoder, decoder,classifier)
-vae.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0001))
+vae.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0005))
 vae.fit([x_train,x_test],target_train_1, epochs=50, batch_size=batch_size)
 
 
@@ -510,3 +510,20 @@ def plot_label_clusters(encd, clfi, data, y):
 
 plot_label_clusters(encoder, classifier, x_res, target_res_1)
 
+"""
+400:400
+测试集数量： 250
+准确数量 167
+
+600:300
+测试集数量： 150
+准确数量 114
+
+600:300
+测试集数量： 150
+准确数量 114
+
+测试集数量： 200
+准确数量 164
+
+"""
