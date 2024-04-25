@@ -26,13 +26,13 @@ class Sampling(layers.Layer):
 global settings
 """
 # 隐藏空间维度
-latent_dim = 4
+latent_dim = 6
 # shape : 输入形状 长 宽 通道数目
 # AIS数据重新采样后长度为 180（暂定），字段数目为 10 ，独热码形式通道为1(gray graph 1,RGB 3)
 height = 160
-width  = 80
+width  = 400
 chan = 1
-beta=100
+beta=1000
 input_shape = (height, width,1)  # 对于灰度图像，通道数是1
 # number of vessel types
 num_classes = 4
@@ -51,7 +51,7 @@ x = layers.Conv2D(1, (10, 10), activation='relu', strides=2, padding='same')(inp
 x = layers.Conv2D(5, (10, 10), activation='relu', strides=2, padding='same')(x)
 x = layers.Conv2D(5, (10, 10), activation='relu', strides=2, padding='same')(x)
 x = layers.Conv2D(5, (5, 5), activation='relu', strides=2, padding='same')(x)
-x = layers.Conv2D(5, (3, 3), activation='relu', strides=1, padding='same')(x)
+x = layers.Conv2D(1, (3, 3), activation='relu', strides=1, padding='same')(x)
 
 # 扁平化后接全连接层
 x = layers.Flatten()(x)
@@ -90,7 +90,7 @@ x = layers.Conv2D(1, (10, 10), activation='relu', strides=2, padding='same')(x_i
 x = layers.Conv2D(5, (10, 10), activation='relu', strides=2, padding='same')(x)
 x = layers.Conv2D(5, (10, 10), activation='relu', strides=2, padding='same')(x)
 x = layers.Conv2D(5, (5, 5), activation='relu', strides=2, padding='same')(x)
-x = layers.Conv2D(5, (3, 3), activation='relu', strides=1, padding='same')(x)
+x = layers.Conv2D(1, (3, 3), activation='relu', strides=1, padding='same')(x)
 
 x = layers.Flatten()(x)
 
@@ -136,14 +136,14 @@ label_input = keras.Input(shape=(num_classes,), name='input_label')
 concatenated_features = layers.concatenate([z_input, label_input])
 
 # 通过两个全连接层生成特征向量
-x = layers.Dense(250, activation='relu')(concatenated_features)
-x = layers.Dense(250, activation='relu')(x)
+x = layers.Dense(1250, activation='relu')(concatenated_features)
+x = layers.Dense(1250, activation='relu')(x)
 
 # 将特征向量恢复到合适的维度以便进行上采样
-x = layers.Reshape((10, 5, 5))(x) # 这里的目标维度取决于您想要如何开始上采样过程
+x = layers.Reshape((10, 25, 5))(x) # 这里的目标维度取决于您想要如何开始上采样过程
 
 # 五个反卷积层（上采样层），使用给定的输出通道数和内核大小
-x = layers.Conv2DTranspose(5, kernel_size=(3, 3), activation='relu', strides=2,padding='same')(x)
+x = layers.Conv2DTranspose(1, kernel_size=(3, 3), activation='relu', strides=2,padding='same')(x)
 x = layers.Conv2DTranspose(5, kernel_size=(5, 5), activation='relu',  strides=2,padding='same')(x)
 x = layers.Conv2DTranspose(5, kernel_size=(10, 10), activation='relu',  strides=2,padding='same')(x)
 x = layers.Conv2DTranspose(5, kernel_size=(10, 10), activation='relu',  strides=2,padding='same')(x)
@@ -267,6 +267,7 @@ class VAE(keras.Model):
 
             Loss_1,kl_loss=compute_loss_labeled(self.encoder,self.decoder,x_supervised,y_supervised)
             # print(type(x_unsupervised))
+            # Loss_2=0
             Loss_2=compute_loss_unlabeled(self.encoder,self.decoder,self.clf,half_u)
             Loss_clf=compute_classifier_loss(self.clf,x_labeled=x_supervised,y_true=y_supervised)
             Loss=(Loss_1+Loss_2)+alpha*Loss_clf
@@ -294,7 +295,7 @@ def convert_to_one_hot(data):
     # 获取数据的形状
     n, _, channels = data.shape
     # 初始化一个用于存储结果的数组
-    total_bins=80
+    total_bins=400
     result = np.zeros((n, 160, total_bins))
 
     # 遍历每一个数据样本
@@ -303,21 +304,21 @@ def convert_to_one_hot(data):
         channel_4_data=data[i,:,4]
         channel_5_data=data[i,:,5]
         channel_6_data=data[i,:,6]
-        for j in range(2):
+        for j in range(4):
             channel_data = data[i, :, j]
-            one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
-            result[i,:,j*10:(j+1)*10]=one_hot
-        for j in range(2):
-            channel_data = data[i, :, j+2]
-            one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
-            result[i,:,(j+2)*10:(j+2+1)*10]=one_hot
+            one_hot=np.eye(50)[np.round(channel_data*49).astype(int)]
+            result[i,:,j*50:(j+1)*50]=one_hot
+        # for j in range(2):
+        #     channel_data = data[i, :, j+2]
+        #     one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
+        #     result[i,:,(j+2)*10:(j+2+1)*10]=one_hot
 
-        one_hot_4=np.eye(15)[np.round(channel_4_data*14).astype(int)]
-        one_hot_5=np.eye(15)[np.round(channel_5_data*14).astype(int)]
-        one_hot_6=np.eye(10)[np.round(channel_6_data*9).astype(int)]
-        result[i, :, 40:40+15] = one_hot_4
-        result[i, :, 55:55+15] = one_hot_5
-        result[i, :, 70:70+10] = one_hot_6
+        one_hot_4=np.eye(75)[np.round(channel_4_data*74).astype(int)]
+        one_hot_5=np.eye(75)[np.round(channel_5_data*74).astype(int)]
+        one_hot_6=np.eye(50)[np.round(channel_6_data*4).astype(int)]
+        result[i, :, 40*5:40*5+75] = one_hot_4
+        result[i, :, 275:275+75] = one_hot_5
+        result[i, :, 350:350+50] = one_hot_6
 
 
     return result
@@ -410,12 +411,12 @@ print(max_len,min_len)
 print(max_wid,min_wid)
 print(max_drt,min_drt)
 
-
-_train=data[:600].copy()
-_test=data[600:900].copy()
+np.random.shuffle(data)
+_train=data[:400].copy()
+_test=data[400:600].copy()
 _test=np.concatenate((_test,_test),axis=0)
 print(type(_test))
-_res=data[900:1100].copy()
+_res=data[600:1100].copy()
 
 x_train=_train[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_train=_train[:,0,9].astype(int)
@@ -424,6 +425,7 @@ x_test=_test[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_test=_test[:,0,9].astype(int)
 
 x_res=_res[:,:,[2,3,4,5,6,7,8]].astype(float)
+# print(_test[0][0])
 target_res=_res[:,0,9].astype(int)
 # 7 8 6 3
 # print(target_train.shape)
@@ -474,11 +476,14 @@ target_res_1=np.expand_dims(target_res_1,-1)
 # print(x_train.shape)
 
 vae = VAE(encoder, decoder,classifier)
-vae.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0005))
-vae.fit([x_train,x_test],target_train_1, epochs=50, batch_size=batch_size)
+vae.compile(optimizer=keras.optimizers.Adam())
+vae.fit([x_train,x_test],target_train_1, epochs=40, batch_size=batch_size)
 
 
-
+group3=[]
+group6=[]
+group7=[]
+group8=[]
 def plot_label_clusters(encd, clfi, data, y):
     # Display a 2D plot of the digit classes in the latent space
     cnt = 0
@@ -492,9 +497,9 @@ def plot_label_clusters(encd, clfi, data, y):
     ax.set_ylabel("z[1]")
     ax.set_zlabel("z[2]")
     plt.show()
-
+    idx=0
     for x in range(clf.shape[0]):
-        print(clf[x],arr_new2[x])
+        # print(clf[x],arr_new2[x])
         mx=0
         clp=-1
         for g in range(4):
@@ -503,12 +508,38 @@ def plot_label_clusters(encd, clfi, data, y):
                 clp=g
         if clp==arr_new2[x]:
             cnt=cnt+1
+        if clp==0:
+            group3.append(_res[idx])
+        elif clp==1:
+            group6.append(_res[idx])
+        elif clp==2:
+            group7.append(_res[idx])
+        elif clp==3:
+            group8.append(_res[idx])
+        idx+=1
+
     print("测试集数量：",clf.shape[0])
     print("准确数量",cnt)
 
 
 
 plot_label_clusters(encoder, classifier, x_res, target_res_1)
+np_group3=np.stack(group3,axis=0)
+np_group6=np.stack(group6,axis=0)
+np_group7=np.stack(group7,axis=0)
+np_group8=np.stack(group8,axis=0)
+with open("group3.pkl",'wb') as f:
+    pkl.dump(np_group3,f)
+
+with open("group6.pkl",'wb') as f:
+    pkl.dump(np_group6,f)
+
+with open("group7.pkl",'wb') as f:
+    pkl.dump(np_group7,f)
+
+with open("group8.pkl",'wb') as f:
+    pkl.dump(np_group8,f)
+
 
 """
 400:400
