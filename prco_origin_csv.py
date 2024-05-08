@@ -65,7 +65,7 @@ for file_n in csv_file:
             cog_min = min(cog_min, cog)
 
             ll_msg_1.append([mmsi, TS, lat, lon, sog, cog, length, width, draft, vesselType])
-
+    # break
 
 
 print("开始排序")

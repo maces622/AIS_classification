@@ -1,11 +1,6 @@
-import os.path
-import pickle
-
 import numpy as np
 import pandas as pd
 from datetime import datetime,timedelta
-from collections import namedtuple
-import csv
 import pickle as pkl
 
 from scipy.interpolate import interp1d
@@ -14,7 +9,8 @@ vessel_dict={}
 # [0 mmsi,1 TS,2 lat,3 lon,4 sog,5 cog,
 # 6 length,7 width,8 draft,9vesselType]
 source_data='california_1.pkl'
-output_data='procd_california.pkl'
+output_data_prd='procd_california.pkl'
+output_data_org='org_california.pkl'
 """
 该部分主要用于按照输入CNN的要求清理AIS数据流
 分别按照速度、长度、目标船只类型进行清理
@@ -43,11 +39,14 @@ def len_jud(l_msg):
     else :
         return False
 def split_into_2(dt1,dt2):
+    # print(dt1,dt2)
+    #西海岸时间是UTC-8，经过处理后在比较是否是同一天。
+    dt1-=timedelta(hours=8)
+    dt2-=timedelta(hours=8)
     if dt2-dt1 > timedelta(hours=2) or (not (dt1.year == dt2.year and
                                         dt1.month == dt2.month and dt1.day == dt2.day)):
         # AIS数据点时间差大于2h or 不属于同一天
         # 需要分成两段轨迹
-
         return True
     else :
         return False
@@ -57,6 +56,8 @@ def in_lst(now_vesselType):
                 60,61,62,63,64,65,66,67,68,69,1012,1013,1014,1015,
                 70,71,72,73,74,75,76,77,78,79,1016,
                 80,81,82,83,84,85,86,87,88,89,1017,1024]
+    target_lst=[60,61,62,63,64,65,66,67,68,69,1012,1013,1014,1015,
+                70,71,72,73,74,75,76,77,78,79,1016]
     if now_vesselType in target_lst:
         return False
     else:
@@ -86,7 +87,6 @@ with open(source_data,"rb") as f:
     now_msg=[]
     for row in pklReader:
         row.append(tot)
-        # print(type(row))
         if started_flg==False:
             now_msg=[]
             now_mmsi=row[0]
@@ -94,7 +94,7 @@ with open(source_data,"rb") as f:
             started_flg=True
             
         else:
-            if row[0]==now_mmsi or not split_into_2(now_msg[-1][1],row[1]):
+            if row[0]==now_mmsi and not split_into_2(now_msg[-1][1],row[1]):
                 now_msg.append(row)
             else :
                 if len_jud(now_msg) or sog_jud(now_msg):
@@ -106,7 +106,6 @@ with open(source_data,"rb") as f:
 
                     ll_msg_2.append(now_msg)
                     tot = tot + 1
-                    # print(now_msg[1])
                     if now_msg[0][9] in vessel_dict:
                         vessel_dict[now_msg[0][9]]+=1
                     else :
@@ -130,15 +129,13 @@ with open(source_data,"rb") as f:
         else:
             vessel_dict[now_msg[0][9]] = 1
 
-print(ll_msg_2[0])
-
                 
 
 print("合格的数据：",len(ll_msg_2))
 print("总数据量：",tot)
 # print(type(ll_msg_2))
 sorted_vdict = sorted(vessel_dict.items(), key=lambda item: (item[0],item[1]))
-print(sorted_vdict)
+# print(sorted_vdict)
 
 """
 IMO VESSEL TYPE LIST
@@ -183,9 +180,7 @@ def resample_data(data, target_length=160, fixed_columns=(0, 1, 6, 7, 8,9),
     original_len=data_array.shape[0]
     num_cols=data_array.shape[1]
     new_len=target_length
-
     resampled_data = np.zeros((new_len, data_array.shape[1]),dtype=object)
-
     # 在指定的区间内返回均匀间隔的数字
     new_indices = np.linspace(0, original_len-1, num=new_len)
 
@@ -204,27 +199,66 @@ def resample_data(data, target_length=160, fixed_columns=(0, 1, 6, 7, 8,9),
                 nearest_idx = np.argmin(np.abs(original_indices - new_idx))
                 resampled_data[i, col] = data_array[nearest_idx, col]
     return resampled_data
-#
-ll_msg_3=[]
-for track in ll_msg_2:
+# geo track net data processing
+def resp_geo(data,reso=timedelta(minutes=10)):
+    start_time=data[0][1]
+    end_time =data[-1][1]
+    start_dt= pd.to_datetime(start_time)
+    end_dt= pd.to_datetime(end_time)
+    df = pd.DataFrame(data)
+    # print(df)
+    # print(type(df))
+    dynamic_cols = ['lat', 'lon', 'sog', 'cog']
+    static_cols = ['len', 'wid', 'dft']
+    df.columns=['mmsi','timestamp','lat','lon','sog','cog','len','wid','dft','vt','nb']
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df.set_index('timestamp', inplace=True)
+    resampled_df = df.resample('10min').first()
+    resampled_df[dynamic_cols] = resampled_df[dynamic_cols].interpolate(method='linear')
+    df = df[~df.index.duplicated(keep='first')]
+    resampled_df[static_cols] = df[static_cols].reindex(resampled_df.index, method='nearest')
+    resampled_df.reset_index(inplace=True)
+    original_columns=['mmsi','timestamp','lat','lon','sog','cog','len','wid','dft','vt','nb']
 
-    resample_Track=(
-        resample_data(track))
+    resampled_df = resampled_df[original_columns]
+    array = resampled_df.to_numpy()
+    # print(array.shape)
+    return array
+
+ll_msg_3=[]
+ll_msg_4=[]
+for track in ll_msg_2:
+    resample_Track=resample_data(track)
     ll_msg_3.append(resample_Track)
+
+    resample_T=resp_geo(track)
+    # print(type(resample_T))
+    ll_msg_4.append(resample_T)
+
+
 np_ll_msg=np.stack(ll_msg_3,axis=0)
-# print(len(np_ll_msg[0]))
-# print(type(np_ll_msg))
+# np_l2_msg=np.stack(ll_msg_4,axis=0)
+
+
+# ========
 x=0
 for track_num in range(np_ll_msg.shape[0]):
     if np_ll_msg[track_num,1,6]!=0:
-
         x=x+1
     for row in range(np_ll_msg.shape[1]):
-        # print(np_ll_msg[track_num,row,1].timestamp())
         np_ll_msg[track_num,row,1]=np_ll_msg[track_num,row,1].timestamp()
-        #
-        # print(np_ll_msg[track_num,row,0])
-        # print(np_ll_msg[track_num,row,6:8])
-with open(output_data,'wb') as f:
+
+for track_num in range(len(ll_msg_4)):
+    for row in range(ll_msg_4[track_num].shape[0]):
+        ll_msg_4[track_num][row,1]=ll_msg_4[track_num][row,1].timestamp()
+    print(ll_msg_4[track_num])
+
+
+with open(output_data_prd,'wb') as f:
     pkl.dump(np_ll_msg,f)
+
+with open(output_data_org,'wb') as f:
+    pkl.dump(ll_msg_4,f)
+
+
 print("有静态参数的样本量：",x)

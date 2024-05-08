@@ -1,5 +1,5 @@
 import os
-
+import datetime
 os.environ["KERAS_BACKEND"] = "tensorflow"
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -35,7 +35,7 @@ chan = 1
 beta=1000
 input_shape = (height, width,1)  # 对于灰度图像，通道数是1
 # number of vessel types
-num_classes = 4
+num_classes = 2
 """
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 """
@@ -95,7 +95,7 @@ x = layers.Conv2D(1, (3, 3), activation='relu', strides=1, padding='same')(x)
 x = layers.Flatten()(x)
 
 # 全连接层获取轨迹特征
-x_features = layers.Dense(250, activation='relu')(x)
+x_features = layers.Dense(1250, activation='relu')(x)
 
 # 全连接层获取标签特征
 label_features = layers.Dense(50, activation='relu')(label_input)
@@ -126,7 +126,7 @@ Build the decoder============================
 """
 # 假设潜在变量z的维度和标签y的one-hot编码维度已知
 
-num_classes = 4 # 分类的数量，即one-hot编码的维度
+
 
 # 潜在变量和标签的输入层
 z_input = keras.Input(shape=(latent_dim,), name='input_latent')
@@ -166,6 +166,7 @@ compucate the value of loss functions========
 """
 @keras.utils.register_keras_serializable()
 def compute_loss_labeled(encoder, decoder, x, y):
+    print(x.shape,y.shape)
     # Encode the input to get the mean, log-variance, and sampled z
     z_mean, z_log_var, z = encoder([x, y])
     # Decode the sampled z to reconstruct the image
@@ -189,14 +190,14 @@ batch_size=100
 def compute_loss_unlabeled(encoder, decoder, classifier, x):
     # Sum over all possible labels
     u_loss = 0.0
-    all_possible_labels=[0,1,2,3]
+    all_possible_labels=[0,1]#,2,3]
 
     predict_res=classifier(x)
     # tf.print(predict_res)
     ## 船只种类
     for y in all_possible_labels:  # all_possible_labels should be one-hot encoded labels
         arrays = np.full((50,), y)
-        label_1 = np.eye(4)[arrays]
+        label_1 = np.eye(num_classes)[arrays]
         label_1 = np.expand_dims(label_1, -1)
         y_tensor = tf.convert_to_tensor(label_1)
 
@@ -260,8 +261,8 @@ class VAE(keras.Model):
         # x_unsupervised=x_supervised
         alpha=beta*float(0.5)
         half_u=x_unsupervised[:50,:,:,:]
-        print(type(x_unsupervised))
-        print(x_unsupervised.shape)
+        # print(type(x_unsupervised))
+        # print(x_unsupervised.shape)
         with tf.GradientTape() as Tape:
             # 均值、方差、z
 
@@ -299,34 +300,42 @@ def convert_to_one_hot(data):
     result = np.zeros((n, 160, total_bins))
 
     # 遍历每一个数据样本
+    # include static data
+    # for i in range(n):
+    #     # 遍历每一个通道
+    #     channel_4_data=data[i,:,4]
+    #     channel_5_data=data[i,:,5]
+    #     channel_6_data=data[i,:,6]
+    #     for j in range(4):
+    #         channel_data = data[i, :, j]
+    #         one_hot=np.eye(50)[np.round(channel_data*49).astype(int)]
+    #         result[i,:,j*50:(j+1)*50]=one_hot
+    #     # for j in range(2):
+    #     #     channel_data = data[i, :, j+2]
+    #     #     one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
+    #     #     result[i,:,(j+2)*10:(j+2+1)*10]=one_hot
+    #
+    #     one_hot_4=np.eye(75)[np.round(channel_4_data*74).astype(int)]
+    #     one_hot_5=np.eye(75)[np.round(channel_5_data*74).astype(int)]
+    #     one_hot_6=np.eye(50)[np.round(channel_6_data*4).astype(int)]
+    #     result[i, :, 40*5:40*5+75] = one_hot_4
+    #     result[i, :, 275:275+75] = one_hot_5
+    #     result[i, :, 350:350+50] = one_hot_6
+
     for i in range(n):
-        # 遍历每一个通道
-        channel_4_data=data[i,:,4]
-        channel_5_data=data[i,:,5]
-        channel_6_data=data[i,:,6]
+
         for j in range(4):
             channel_data = data[i, :, j]
-            one_hot=np.eye(50)[np.round(channel_data*49).astype(int)]
-            result[i,:,j*50:(j+1)*50]=one_hot
-        # for j in range(2):
-        #     channel_data = data[i, :, j+2]
-        #     one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
-        #     result[i,:,(j+2)*10:(j+2+1)*10]=one_hot
-
-        one_hot_4=np.eye(75)[np.round(channel_4_data*74).astype(int)]
-        one_hot_5=np.eye(75)[np.round(channel_5_data*74).astype(int)]
-        one_hot_6=np.eye(50)[np.round(channel_6_data*4).astype(int)]
-        result[i, :, 40*5:40*5+75] = one_hot_4
-        result[i, :, 275:275+75] = one_hot_5
-        result[i, :, 350:350+50] = one_hot_6
-
+            one_hot=np.eye(100)[np.round(channel_data*99).astype(int)]
+            result[i,:,j*100:(j+1)*100]=one_hot
 
     return result
 
 with open('procd_california.pkl','rb') as f:
     data = pkl.load(f)
-
-
+with open('org_california.pkl','rb') as f:
+    data_org=pkl.load(f)
+print(type(data_org))
 """
 将数据集分为训练集和测试集，
 并将AIS字段和其船只类型标签拆开
@@ -402,6 +411,10 @@ data[:,:,5]=(data[:,:,5]-min_cog)/(max_cog-min_cog)
 data[:,:,6]=(data[:,:,6]-min_len)/(max_len-min_len)
 data[:,:,7]=(data[:,:,7]-min_wid)/(max_wid-min_wid)
 data[:,:,8]=(data[:,:,8]-min_drt)/(max_drt-min_drt)
+for track in data :
+    dt1 = datetime.datetime.fromtimestamp(track[0][1])
+    dt2 = datetime.datetime.fromtimestamp(track[-1][1])
+    # print (dt1,dt2)
 print(max_lat,min_lat)
 print(max_lon,min_lon)
 print(max_sog,min_sog)
@@ -411,13 +424,18 @@ print(max_len,min_len)
 print(max_wid,min_wid)
 print(max_drt,min_drt)
 
+np.random.seed(42)
 np.random.shuffle(data)
-_train=data[:400].copy()
-_test=data[400:600].copy()
-_test=np.concatenate((_test,_test),axis=0)
-print(type(_test))
-_res=data[600:1100].copy()
+np.random.seed(42)
+np.random.shuffle(data_org)
 
+
+# print(data.shape,len(data_org))
+_train=data[:5000].copy()
+_test=data[5000:7500].copy()
+_test=np.concatenate((_test,_test),axis=0)
+_res=data[9000:10000].copy()
+_out_res=data_org[9000:10000].copy()
 x_train=_train[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_train=_train[:,0,9].astype(int)
 
@@ -425,43 +443,41 @@ x_test=_test[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_test=_test[:,0,9].astype(int)
 
 x_res=_res[:,:,[2,3,4,5,6,7,8]].astype(float)
-# print(_test[0][0])
+
 target_res=_res[:,0,9].astype(int)
-# 7 8 6 3
-# print(target_train.shape)
-# change label to one-hot format
+
 conditions1 = [
-    target_train == 3,
+    # target_train == 3,
     target_train == 6,
     target_train == 7,
-    target_train == 8,
+    # target_train == 8,
 ]
 conditions2 = [
-    target_test == 3,
+    # target_test == 3,
     target_test == 6,
     target_test == 7,
-    target_test == 8,
+    # target_test == 8,
 ]
 
 
 conditions3 = [
-    target_res == 3,
+    # target_res == 3,
     target_res == 6,
     target_res == 7,
-    target_res == 8,
+    # target_res == 8,
 ]
 
 # 定义对应条件下的替换值
-choices = [0, 1, 2, 3]
+choices = [0, 1]#, 2, 3]
 
 # 应用 numpy.select
 
 arr_new = np.select(conditions1, choices, default=target_train)
-target_train_1=np.eye(4)[arr_new]
+target_train_1=np.eye(num_classes)[arr_new]
 arr_new1 = np.select(conditions2, choices, default=target_test)
-target_test_1=np.eye(4)[arr_new1]
+target_test_1=np.eye(num_classes)[arr_new1]
 arr_new2 = np.select(conditions3, choices, default=target_res)
-target_res_1=np.eye(4)[arr_new2]
+target_res_1=np.eye(num_classes)[arr_new2]
 
 x_train=convert_to_one_hot(x_train)
 x_test=convert_to_one_hot(x_test)
@@ -473,17 +489,19 @@ x_res =  np.expand_dims(x_res, -1)
 target_train_1 = np.expand_dims(target_train_1,-1)
 target_res_1=np.expand_dims(target_res_1,-1)
 
-# print(x_train.shape)
+
 
 vae = VAE(encoder, decoder,classifier)
 vae.compile(optimizer=keras.optimizers.Adam())
-vae.fit([x_train,x_test],target_train_1, epochs=40, batch_size=batch_size)
+vae.fit([x_train,x_test],target_train_1, epochs=30, batch_size=batch_size)
 
 
 group3=[]
 group6=[]
 group7=[]
 group8=[]
+group_fake_6=[]
+group_fake_7=[]
 def plot_label_clusters(encd, clfi, data, y):
     # Display a 2D plot of the digit classes in the latent space
     cnt = 0
@@ -491,7 +509,7 @@ def plot_label_clusters(encd, clfi, data, y):
     clf=clfi.predict(data)
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')  # 创建一个三维的绘图工具
-    ax.scatter(z_mean[:190, 0], z_mean[:190, 1], z_mean[:190, 1], c=arr_new2[:190])
+    ax.scatter(z_mean[:200, 0], z_mean[:200, 1], z_mean[:200, 1], c=arr_new2[:200])
     # plt.colorbar()
     ax.set_xlabel("z[0]")
     ax.set_ylabel("z[1]")
@@ -499,23 +517,28 @@ def plot_label_clusters(encd, clfi, data, y):
     plt.show()
     idx=0
     for x in range(clf.shape[0]):
-        # print(clf[x],arr_new2[x])
         mx=0
         clp=-1
-        for g in range(4):
+        for g in range(num_classes):
             if clf[x][g]>mx:
                 mx=clf[x][g]
                 clp=g
         if clp==arr_new2[x]:
             cnt=cnt+1
-        if clp==0:
-            group3.append(_res[idx])
-        elif clp==1:
-            group6.append(_res[idx])
-        elif clp==2:
-            group7.append(_res[idx])
-        elif clp==3:
-            group8.append(_res[idx])
+
+        if arr_new2[x] ==0 and clp==0:
+            group6.append(_out_res[idx])
+        if arr_new2[x]==1 and clp==1:
+            group7.append(_out_res[idx])
+        if clp == 0 and arr_new2[x]==1:
+            group_fake_6.append(_out_res[idx])
+        if clp == 1 and arr_new2[x]==0:
+            group_fake_7.append(_out_res[idx])
+        # elif clp==2:
+        #     group7.append(_out_res[idx])
+        # elif clp==3:
+        #     group8.append(_out_res[idx])
+            
         idx+=1
 
     print("测试集数量：",clf.shape[0])
@@ -524,23 +547,38 @@ def plot_label_clusters(encd, clfi, data, y):
 
 
 plot_label_clusters(encoder, classifier, x_res, target_res_1)
-np_group3=np.stack(group3,axis=0)
-np_group6=np.stack(group6,axis=0)
-np_group7=np.stack(group7,axis=0)
-np_group8=np.stack(group8,axis=0)
-with open("group3.pkl",'wb') as f:
-    pkl.dump(np_group3,f)
+# np_group3=np.stack(group3,axis=0)
+# np_group6=np.stack(group6,axis=0)
+# np_group7=np.stack(group7,axis=0)
+# np_group8=np.stack(group8,axis=0)
+
+# np_group78=np.stack(group78,axis=0)
+
+# with open("group3.pkl",'wb') as f:
+#     pkl.dump(group3,f)
+
+# print(type(group6))
+
+# for track_num in range(len(group6)):
+#     print(type(group6[track_num]))
+
 
 with open("group6.pkl",'wb') as f:
-    pkl.dump(np_group6,f)
+    pkl.dump(group6,f)
+
 
 with open("group7.pkl",'wb') as f:
-    pkl.dump(np_group7,f)
+    pkl.dump(group7,f)
 
-with open("group8.pkl",'wb') as f:
-    pkl.dump(np_group8,f)
+with open("group7fake.pkl",'wb') as f:
+    pkl.dump(group_fake_7,f)
+with open("group6fake.pkl",'wb') as f:
+    pkl.dump(group_fake_6,f)
+#
+# with open("group8.pkl",'wb') as f:
+#     pkl.dump(group8,f)
 
-
+"""-------------------------------------------"""
 """
 400:400
 测试集数量： 250
