@@ -1,5 +1,5 @@
 import os
-import datetime
+
 os.environ["KERAS_BACKEND"] = "tensorflow"
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -12,6 +12,8 @@ from keras.callbacks import ModelCheckpoint
 import pickle as pkl
 import matplotlib.pyplot as plt
 import math
+from keras.regularizers import l1, l2,l1_l2
+import pandas as pd
 class Sampling(layers.Layer):
     """Uses (z_mean, z_log_var) to sample z, the vector encoding a digit."""
     # 重参数技巧，因为采样过程无法进行梯度下降
@@ -25,6 +27,7 @@ class Sampling(layers.Layer):
 """
 global settings
 """
+
 # 隐藏空间维度
 latent_dim = 6
 # shape : 输入形状 长 宽 通道数目
@@ -35,7 +38,7 @@ chan = 1
 beta=1000
 input_shape = (height, width,1)  # 对于灰度图像，通道数是1
 # number of vessel types
-num_classes = 2
+num_classes = 4
 """
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 """
@@ -55,7 +58,8 @@ x = layers.Conv2D(1, (3, 3), activation='relu', strides=1, padding='same')(x)
 
 # 扁平化后接全连接层
 x = layers.Flatten()(x)
-x = layers.Dense(250, activation='relu')(x)
+# x = layers.Dense(250, activation='relu')(x)
+x = layers.Dense(250, activation='relu',kernel_regularizer=l1_l2(l1=0.05,l2=0.05))(x)
 
 # 输出层
 output_layer = layers.Dense(num_classes, activation='softmax')(x)  # num_classes是输出的分类数，根据实际情况替换
@@ -95,7 +99,9 @@ x = layers.Conv2D(1, (3, 3), activation='relu', strides=1, padding='same')(x)
 x = layers.Flatten()(x)
 
 # 全连接层获取轨迹特征
-x_features = layers.Dense(1250, activation='relu')(x)
+# x_features = layers.Dense(250, activation='relu')(x)
+
+x_features = layers.Dense(250, activation='relu',kernel_regularizer=l2(0.05))(x)
 
 # 全连接层获取标签特征
 label_features = layers.Dense(50, activation='relu')(label_input)
@@ -126,7 +132,7 @@ Build the decoder============================
 """
 # 假设潜在变量z的维度和标签y的one-hot编码维度已知
 
-
+num_classes = 4 # 分类的数量，即one-hot编码的维度
 
 # 潜在变量和标签的输入层
 z_input = keras.Input(shape=(latent_dim,), name='input_latent')
@@ -137,7 +143,10 @@ concatenated_features = layers.concatenate([z_input, label_input])
 
 # 通过两个全连接层生成特征向量
 x = layers.Dense(1250, activation='relu')(concatenated_features)
-x = layers.Dense(1250, activation='relu')(x)
+
+# x = layers.Dense(1250, activation='relu',)(x)
+
+x = layers.Dense(1250, activation='relu',kernel_regularizer=l2(0.05))(x)
 
 # 将特征向量恢复到合适的维度以便进行上采样
 x = layers.Reshape((10, 25, 5))(x) # 这里的目标维度取决于您想要如何开始上采样过程
@@ -166,7 +175,6 @@ compucate the value of loss functions========
 """
 @keras.utils.register_keras_serializable()
 def compute_loss_labeled(encoder, decoder, x, y):
-    print(x.shape,y.shape)
     # Encode the input to get the mean, log-variance, and sampled z
     z_mean, z_log_var, z = encoder([x, y])
     # Decode the sampled z to reconstruct the image
@@ -190,17 +198,16 @@ batch_size=100
 def compute_loss_unlabeled(encoder, decoder, classifier, x):
     # Sum over all possible labels
     u_loss = 0.0
-    all_possible_labels=[0,1]#,2,3]
+    all_possible_labels=[0,1,2,3]
 
     predict_res=classifier(x)
     # tf.print(predict_res)
     ## 船只种类
     for y in all_possible_labels:  # all_possible_labels should be one-hot encoded labels
-        arrays = np.full((50,), y)
-        label_1 = np.eye(num_classes)[arrays]
+        arrays = np.full((25,), y)
+        label_1 = np.eye(4)[arrays]
         label_1 = np.expand_dims(label_1, -1)
         y_tensor = tf.convert_to_tensor(label_1)
-
 
         loss,kl_loss = compute_loss_labeled(encoder, decoder, x, y_tensor)
         q_y_given_x=predict_res[:,y]
@@ -218,10 +225,13 @@ def compute_classifier_loss(classifier, x_labeled, y_true):
     y_pred = classifier(x_labeled)
     # Compute the cross-entropy loss
     y_true_squeezed = tf.squeeze(y_true, axis=-1)
-    clf_loss = tf.reduce_mean(
-        keras.losses.categorical_crossentropy(y_true_squeezed, y_pred)
-    )
-    return clf_loss
+    class_weights = tf.constant([1/1,1/5, 1/3, 1/1])  # 根据实际类别的不平衡程度调整
+    # class_weights = tf.constant([1.0,1.0, 1.0, 1.0])  # 根据实际类别的不平衡程度调整
+    loss = keras.losses.categorical_crossentropy(y_true_squeezed, y_pred)
+    sample_weights = tf.reduce_sum(class_weights * y_true_squeezed, axis=1)  # 应用权重
+    weighted_loss = tf.reduce_mean(loss * sample_weights)
+   
+    return weighted_loss
 
 
 
@@ -229,6 +239,7 @@ def compute_classifier_loss(classifier, x_labeled, y_true):
 """
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 """
+
 @keras.utils.register_keras_serializable()
 class VAE(keras.Model):
 
@@ -244,6 +255,12 @@ class VAE(keras.Model):
         self.kl_loss_tracker = keras.metrics.Mean(name="kl_loss")
         self.clf_loss_tracker= keras.metrics.Mean(name="Loss_clf")
         self.alpha_tracker=keras.metrics.Mean(name="alpha")
+    
+    def call(self, inputs):
+        x_supervised, y_supervised = inputs
+        z_mean, z_log_var, z = self.encoder([x_supervised, y_supervised])
+        reconstructed = self.decoder([z, y_supervised])
+        return reconstructed
 # train step每次会自动调取数据集
     @property
     def metrics(self):
@@ -260,7 +277,7 @@ class VAE(keras.Model):
         # print(x_supervised.shape,y_supervised.shape,x_unsupervised.shape)
         # x_unsupervised=x_supervised
         alpha=beta*float(0.5)
-        half_u=x_unsupervised[:50,:,:,:]
+        half_u=x_unsupervised[:25,:,:,:]
         # print(type(x_unsupervised))
         # print(x_unsupervised.shape)
         with tf.GradientTape() as Tape:
@@ -268,10 +285,10 @@ class VAE(keras.Model):
 
             Loss_1,kl_loss=compute_loss_labeled(self.encoder,self.decoder,x_supervised,y_supervised)
             # print(type(x_unsupervised))
-            # Loss_2=0
+
             Loss_2=compute_loss_unlabeled(self.encoder,self.decoder,self.clf,half_u)
             Loss_clf=compute_classifier_loss(self.clf,x_labeled=x_supervised,y_true=y_supervised)
-            Loss=(Loss_1+Loss_2)+alpha*Loss_clf
+            Loss=(Loss_1+Loss_2*0.25)+alpha*Loss_clf
 
         grads = Tape.gradient(Loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -300,42 +317,34 @@ def convert_to_one_hot(data):
     result = np.zeros((n, 160, total_bins))
 
     # 遍历每一个数据样本
-    # include static data
-    # for i in range(n):
-    #     # 遍历每一个通道
-    #     channel_4_data=data[i,:,4]
-    #     channel_5_data=data[i,:,5]
-    #     channel_6_data=data[i,:,6]
-    #     for j in range(4):
-    #         channel_data = data[i, :, j]
-    #         one_hot=np.eye(50)[np.round(channel_data*49).astype(int)]
-    #         result[i,:,j*50:(j+1)*50]=one_hot
-    #     # for j in range(2):
-    #     #     channel_data = data[i, :, j+2]
-    #     #     one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
-    #     #     result[i,:,(j+2)*10:(j+2+1)*10]=one_hot
-    #
-    #     one_hot_4=np.eye(75)[np.round(channel_4_data*74).astype(int)]
-    #     one_hot_5=np.eye(75)[np.round(channel_5_data*74).astype(int)]
-    #     one_hot_6=np.eye(50)[np.round(channel_6_data*4).astype(int)]
-    #     result[i, :, 40*5:40*5+75] = one_hot_4
-    #     result[i, :, 275:275+75] = one_hot_5
-    #     result[i, :, 350:350+50] = one_hot_6
-
     for i in range(n):
-
+        # 遍历每一个通道
+        channel_4_data=data[i,:,4]
+        channel_5_data=data[i,:,5]
+        channel_6_data=data[i,:,6]
         for j in range(4):
             channel_data = data[i, :, j]
-            one_hot=np.eye(100)[np.round(channel_data*99).astype(int)]
-            result[i,:,j*100:(j+1)*100]=one_hot
+            one_hot=np.eye(50)[np.round(channel_data*49).astype(int)]
+            result[i,:,j*50:(j+1)*50]=one_hot
+        # for j in range(2):
+        #     channel_data = data[i, :, j+2]
+        #     one_hot=np.eye(10)[np.round(channel_data*9).astype(int)]
+        #     result[i,:,(j+2)*10:(j+2+1)*10]=one_hot
+
+        one_hot_4=np.eye(75)[np.round(channel_4_data*74).astype(int)]
+        one_hot_5=np.eye(75)[np.round(channel_5_data*74).astype(int)]
+        one_hot_6=np.eye(50)[np.round(channel_6_data*49).astype(int)]
+        result[i, :, 40*5:40*5+75] = one_hot_4
+        result[i, :, 275:275+75] = one_hot_5
+        result[i, :, 350:350+50] = one_hot_6
+
 
     return result
 
 with open('procd_california.pkl','rb') as f:
     data = pkl.load(f)
-with open('org_california.pkl','rb') as f:
-    data_org=pkl.load(f)
-print(type(data_org))
+
+
 """
 将数据集分为训练集和测试集，
 并将AIS字段和其船只类型标签拆开
@@ -350,7 +359,7 @@ print(type(data_org))
 
 
 """
-input shape 
+input shape
 train set
 data  x:(286, 180, 9)
 label y:(286,)
@@ -411,10 +420,6 @@ data[:,:,5]=(data[:,:,5]-min_cog)/(max_cog-min_cog)
 data[:,:,6]=(data[:,:,6]-min_len)/(max_len-min_len)
 data[:,:,7]=(data[:,:,7]-min_wid)/(max_wid-min_wid)
 data[:,:,8]=(data[:,:,8]-min_drt)/(max_drt-min_drt)
-for track in data :
-    dt1 = datetime.datetime.fromtimestamp(track[0][1])
-    dt2 = datetime.datetime.fromtimestamp(track[-1][1])
-    # print (dt1,dt2)
 print(max_lat,min_lat)
 print(max_lon,min_lon)
 print(max_sog,min_sog)
@@ -423,19 +428,17 @@ print(max_cog,min_cog)
 print(max_len,min_len)
 print(max_wid,min_wid)
 print(max_drt,min_drt)
-
 np.random.seed(42)
+
 np.random.shuffle(data)
-np.random.seed(42)
-np.random.shuffle(data_org)
+print(data.shape[0])
+print("000000000000000000000000000---------")
+_train=data[:2000].copy()
+_test=data[2000:2500].copy()
+_test=np.concatenate((_test,_test,_test,_test),axis=0)
+print(type(_test))
+_res=data[2500:3700].copy()
 
-
-# print(data.shape,len(data_org))
-_train=data[:5000].copy()
-_test=data[5000:7500].copy()
-_test=np.concatenate((_test,_test),axis=0)
-_res=data[9000:10000].copy()
-_out_res=data_org[9000:10000].copy()
 x_train=_train[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_train=_train[:,0,9].astype(int)
 
@@ -443,41 +446,44 @@ x_test=_test[:,:,[2,3,4,5,6,7,8]].astype(float)
 target_test=_test[:,0,9].astype(int)
 
 x_res=_res[:,:,[2,3,4,5,6,7,8]].astype(float)
-
+# print(_test[0][0])
 target_res=_res[:,0,9].astype(int)
-
+target_mmsi=_res[:,0,1].astype(int)
+# 7 8 6 3
+# print(target_train.shape)
+# change label to one-hot format
 conditions1 = [
-    # target_train == 3,
+    target_train == 3,
     target_train == 6,
     target_train == 7,
-    # target_train == 8,
+    target_train == 8,
 ]
 conditions2 = [
-    # target_test == 3,
+    target_test == 3,
     target_test == 6,
     target_test == 7,
-    # target_test == 8,
+    target_test == 8,
 ]
 
 
 conditions3 = [
-    # target_res == 3,
+    target_res == 3,
     target_res == 6,
     target_res == 7,
-    # target_res == 8,
+    target_res == 8,
 ]
 
 # 定义对应条件下的替换值
-choices = [0, 1]#, 2, 3]
+choices = [0, 1, 2, 3]
 
 # 应用 numpy.select
 
 arr_new = np.select(conditions1, choices, default=target_train)
-target_train_1=np.eye(num_classes)[arr_new]
+target_train_1=np.eye(4)[arr_new]
 arr_new1 = np.select(conditions2, choices, default=target_test)
-target_test_1=np.eye(num_classes)[arr_new1]
+target_test_1=np.eye(4)[arr_new1]
 arr_new2 = np.select(conditions3, choices, default=target_res)
-target_res_1=np.eye(num_classes)[arr_new2]
+target_res_1=np.eye(4)[arr_new2]
 
 x_train=convert_to_one_hot(x_train)
 x_test=convert_to_one_hot(x_test)
@@ -489,27 +495,63 @@ x_res =  np.expand_dims(x_res, -1)
 target_train_1 = np.expand_dims(target_train_1,-1)
 target_res_1=np.expand_dims(target_res_1,-1)
 
+# print(x_train.shape)
+epoch_losses = []
 
+def on_epoch_end(epoch, logs):
+    epoch_losses.append(logs['Loss_clf'])
 
+# 将回调函数传递给训练过程
+callbacks = [tf.keras.callbacks.LambdaCallback(on_epoch_end=on_epoch_end)]
+encoder.load_weights('enc_1.h5')
+classifier.load_weights('clf_1.h5')
 vae = VAE(encoder, decoder,classifier)
 vae.compile(optimizer=keras.optimizers.Adam())
-vae.fit([x_train,x_test],target_train_1, epochs=30, batch_size=batch_size)
 
+# vae.load_weights('vae_weights.h5')
+# vae.fit([x_train,x_test],target_train_1, epochs=25, batch_size=batch_size,callbacks=callbacks)
+# vae.save_weights('vae_weights.h5')
+
+
+
+
+loss_lst=[]
+
+# 输出每个epoch的平均损失
+for i, loss in enumerate(epoch_losses):
+    print(f"Epoch {i+1}: Average CLF Loss = {loss}")
+    loss_lst.append(loss)
+# with open(f"loss_beta_is{beta}_1.pkl","wb") as f:
+#     pkl.dump(loss_lst,f)
 
 group3=[]
 group6=[]
 group7=[]
 group8=[]
-group_fake_6=[]
-group_fake_7=[]
+record_key_v=[]
+confusion_matrix = np.zeros((4, 4),dtype=int)
+file_path = 'mmsi_vessel_type.csv'
+columns=["MMSI","class"]
+# 判断文件是否存在
+if os.path.exists(file_path):
+    df1 = pd.read_csv('mmsi_vessel_type.csv')
+
+else:
+    df1 = pd.DataFrame(columns=columns)
+# 使用append添加到df1
+df1.at[0, 'MMSI'] = 333333333
+df1.at[0, 'class'] = 'Passenger'
+# print(df1)
+
 def plot_label_clusters(encd, clfi, data, y):
+    global df1
     # Display a 2D plot of the digit classes in the latent space
     cnt = 0
     z_mean, _, _ = encd.predict([data,y])
     clf=clfi.predict(data)
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')  # 创建一个三维的绘图工具
-    ax.scatter(z_mean[:200, 0], z_mean[:200, 1], z_mean[:200, 1], c=arr_new2[:200])
+    ax.scatter(z_mean[:190, 0], z_mean[:190, 1], z_mean[:190, 1], c=arr_new2[:190])
     # plt.colorbar()
     ax.set_xlabel("z[0]")
     ax.set_ylabel("z[1]")
@@ -517,68 +559,66 @@ def plot_label_clusters(encd, clfi, data, y):
     plt.show()
     idx=0
     for x in range(clf.shape[0]):
+        # print(clf[x],arr_new2[x])
         mx=0
         clp=-1
-        for g in range(num_classes):
+        for g in range(4):
             if clf[x][g]>mx:
                 mx=clf[x][g]
                 clp=g
         if clp==arr_new2[x]:
             cnt=cnt+1
+        new_data ={'MMSI': target_mmsi[x], 'class': arr_new2[x]}
 
-        if arr_new2[x] ==0 and clp==0:
-            group6.append(_out_res[idx])
-        if arr_new2[x]==1 and clp==1:
-            group7.append(_out_res[idx])
-        if clp == 0 and arr_new2[x]==1:
-            group_fake_6.append(_out_res[idx])
-        if clp == 1 and arr_new2[x]==0:
-            group_fake_7.append(_out_res[idx])
-        # elif clp==2:
-        #     group7.append(_out_res[idx])
-        # elif clp==3:
-        #     group8.append(_out_res[idx])
-            
+        df1.loc[len(df1)] = new_data
+        confusion_matrix[arr_new2[x]][clp]+=1
+        # df = df.append(new_data, ignore_index=True)
+
+        if clp==0:
+            group3.append(_res[idx])
+        elif clp==1:
+            group6.append(_res[idx])
+        elif clp==2:
+            group7.append(_res[idx])
+        elif clp==3:
+            group8.append(_res[idx])
         idx+=1
 
     print("测试集数量：",clf.shape[0])
     print("准确数量",cnt)
 
 
-
 plot_label_clusters(encoder, classifier, x_res, target_res_1)
+# df1.to_csv('mmsi_vessel_type.csv', index=False)
+unique_class_counts = df1.groupby('MMSI')['class'].nunique()
+mmsis_with_multiple_classes = unique_class_counts[unique_class_counts > 1].index
+entries_with_multiple_classes = df1[df1['MMSI'].isin(mmsis_with_multiple_classes)]
+entries_with_multiple_classes
+print(entries_with_multiple_classes)
+print(len(entries_with_multiple_classes))
+
+# check C
+
+
+
+#
 # np_group3=np.stack(group3,axis=0)
 # np_group6=np.stack(group6,axis=0)
 # np_group7=np.stack(group7,axis=0)
 # np_group8=np.stack(group8,axis=0)
-
-# np_group78=np.stack(group78,axis=0)
-
 # with open("group3.pkl",'wb') as f:
-#     pkl.dump(group3,f)
-
-# print(type(group6))
-
-# for track_num in range(len(group6)):
-#     print(type(group6[track_num]))
-
-
-with open("group6.pkl",'wb') as f:
-    pkl.dump(group6,f)
-
-
-with open("group7.pkl",'wb') as f:
-    pkl.dump(group7,f)
-
-with open("group7fake.pkl",'wb') as f:
-    pkl.dump(group_fake_7,f)
-with open("group6fake.pkl",'wb') as f:
-    pkl.dump(group_fake_6,f)
+#     pkl.dump(np_group3,f)
+#
+# with open("group6.pkl",'wb') as f:
+#     pkl.dump(np_group6,f)
+#
+# with open("group7.pkl",'wb') as f:
+#     pkl.dump(np_group7,f)
 #
 # with open("group8.pkl",'wb') as f:
-#     pkl.dump(group8,f)
+#     pkl.dump(np_group8,f)
 
-"""-------------------------------------------"""
+print(confusion_matrix)
 """
 400:400
 测试集数量： 250
@@ -594,5 +634,50 @@ with open("group6fake.pkl",'wb') as f:
 
 测试集数量： 200
 准确数量 164
+"""
 
+"""
+1101
+[[ 72  18   0   0]
+ [ 17 552   3   3]
+ [  1  15 342  17]
+ [  0   5  20 135]]
+ 
+[[ 72  16   0   2]
+ [  9 563   1   2]
+ [  3   6 354  12]
+ [  0   2  15 143]]
+
+
+[[ 69  16   2   3]
+ [ 13 554   4   4]
+ [  0  11 325  39]
+ [  0   1  15 144]]
+ 
+ m1
+ 1108
+[[ 67  20   2   1]
+ [ 17 555   3   0]
+ [  1  15 343  16]
+ [  0   3  21 136]]
+[[ 62  25   2   1]
+ [ 14 557   4   0]
+ [  2   8 349  16]
+ [  0   1  19 140]]
+1118
+[[ 77  12   1   0]
+ [ 27 541   6   1]
+ [  3   1 358  13]
+ [  0   1  17 142]]
+m2
+1110
+[[ 77  11   0   2]
+ [ 23 549   2   1]
+ [  2   8 348  17]
+ [  0   1  23 136]]
+
+[[ 78   7   4   1]
+ [ 19 548   5   3]
+ [  3   5 312  55]
+ [  0   0   4 156]]
 """
